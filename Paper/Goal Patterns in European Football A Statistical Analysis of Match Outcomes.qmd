@@ -1,0 +1,367 @@
+---
+title: "Goal Patterns in European Football: A Statistical Analysis of Match Outcomes"
+author: "Chenyiteng Han"
+date: "today"
+date-format: "long"
+number-sections: true
+abstract: "This study delves into the statistical patterns of goal scoring in European football matches, drawing on an extensive dataset from the European Soccer Database available on Kaggle. By employing a range of R packages designed for data manipulation, cleaning, and statistical modeling, this research examines the relationship between team identifiers and match outcomes. Initial Poisson regression models revealed significant overdispersion, prompting a transition to Negative Binomial regression to achieve a more accurate portrayal of the count data. This paper elucidates the methodological choices between logistic, Poisson, and Negative Binomial regressions, ultimately justifying the use of the latter due to its capability to handle overdispersed data. The results offer new insights into home and away goal scoring trends, contributing to the broader understanding of team performance in European leagues."
+thanks: "Code and data from this analysis are available at: https://github.com/Hhnxxxxxx/European-Football.git" 
+bibliography: Reference.bib
+format: pdf
+---
+
+```{r}
+#| label: load-packages
+#| include: false
+
+library(RSQLite)
+library(dplyr)
+library(tidyverse)
+library(knitr)
+library(broom)
+library(MASS)
+library(kableExtra)
+
+```
+
+# Introduction
+
+The realm of competitive football is rich with data, each match being a confluence of strategy, skill, and chance that leaves behind a trail of statistics ripe for analysis. At the heart of this investigation is the quest to uncover the patterns of goal scoring and understand the nuances that distinguish one match from another. This paper presents a comprehensive analysis of European football matches, employing advanced statistical methods to dissect the intricacies of the game's most definitive outcome: the goal.
+
+Leveraging the data science capabilities of R, we accessed and manipulated a detailed dataset from the publicly available European Soccer Database on Kaggle. The dplyr package, part of the powerful tidyverse suite, afforded us an efficient and intuitive means of cleaning and preparing our data for analysis. This process involved selecting key variables that shed light on the number of goals scored by both home and away teams, allowing us to probe into the potential home-field advantages and team performance dynamics.
+
+Our statistical journey began with Poisson regression models, which are well-suited for modeling count data such as goals. However, our rigorous diagnostic tests indicated the presence of overdispersion, leading us to pivot to Negative Binomial regression models. These models, equipped to handle the extra variance observed in our data, painted a more accurate and nuanced picture of goal-scoring trends.
+
+As we navigate through the intricate statistical landscape, this paper discusses the rationale behind our choice of modeling techniques. We articulate why logistic regression, typically reserved for binary outcomes, was not a suitable contender for our count data analysis. In contrast, the Negative Binomial regression emerged as the superior choice, adeptly accommodating the overdispersion that the Poisson regression models could not.
+
+With the adoption of the Negative Binomial regression models, we enhance the robustness of our findings, ensuring that our inferences are firmly rooted in the realities of the data. This study not only contributes valuable insights to the domain of sports analytics but also serves as a testament to the power of statistical modeling in extracting meaningful stories from raw numbers.
+
+# Data
+
+The analysis of match outcomes within the comprehensive European Soccer Database, openly available on Kaggle, was undergirded by the R software environment and a suite of its packages, offering an extensive toolkit for data science (@RCoreTeam). Direct interactions with the SQLite database were facilitated through the RSQLite package (@RSQLite), providing a seamless database management experience in R. Data manipulation and cleaning were adeptly handled using the tidyverse package, a collection of R packages designed for data science that simplifies many common data handling tasks (@Tidyverse2019). The dplyr package, an integral part of the tidyverse (@Tidyverse2019), delivered a powerful and user-friendly syntax for data manipulation, while broom (@Broom) elegantly converted statistical analysis outputs into tidy data frames, making them amenable to further analysis and interpretation. For more advanced statistical modeling, especially for count data, the MASS package (@MASS) supplied the necessary functions to accurately model overdispersion through negative binomial regression. The documentation and reporting process was augmented by knitr (@Knitr2014), integrating R code with prose to produce dynamic reports. Finally, the kableExtra package (@KableExtra) was utilized to enhance the knitr package's kable function, enabling the creation of sophisticated and aesthetically pleasing tables that effectively communicate the results of the statistical models.
+
+
+```{r}
+#| label: get-dataset
+#| warning: false
+#| message: false
+#| results: 'hide'
+#| echo: false
+
+database_path <- 'database.sqlite'
+conn <- dbConnect(RSQLite::SQLite(), database_path)
+
+# List all tables in the SQLite database
+tables <- dbListTables(conn)
+
+# For each table, list all columns
+for (table in tables) {
+  cat("Table:", table, "\n")
+  cat("Columns:", toString(dbListFields(conn, table)), "\n\n")
+}
+
+query <- "SELECT * FROM Match"
+matches <- dbGetQuery(conn, query)
+
+# Disconnect
+dbDisconnect(conn)
+
+matches_cleaned <- matches %>%
+  dplyr::select(id, season, home_team_api_id, away_team_api_id, home_team_goal, away_team_goal)
+
+write_csv(matches_cleaned, "matches_cleaned.csv")
+
+```
+
+The dataset under review has been sourced from the extensive European Soccer Database, which is publicly available on Kaggle. This particular subset of data has been subjected to a cleansing process to refine the contents for analytical purposes. The original, expansive database includes a variety of tables encompassing detailed information about football matches across European leagues.
+
+## Data Cleaning Process
+
+The cleaning process involved the selection of relevant columns that capture the essential details of the matches, leading to a focused and streamlined dataset for subsequent analysis. Specifically, the columns retained through the process are as follows:
+
+- `id`: A unique identifier assigned to each match, facilitating easy referencing and data integrity.
+- `season`: The campaign during which the match was played, spanning from the 2008/2009 season to the 2015/2016 season, providing a temporal dimension to the data.
+- `home_team_api_id`: The unique API identifier for the home team, delineating the team playing on their home turf.
+- `away_team_api_id`: The unique API identifier for the away team, distinguishing the team playing outside their home venue.
+- `home_team_goal`: The total number of goals netted by the home team during the match, offering insights into the offensive strength and home advantage.
+- `away_team_goal`: The total number of goals netted by the away team, presenting a measure of the team's performance in an away setting.
+
+## Purpose and Significance of Selected Variables
+
+The rationale behind selecting these specific columns was to distill the dataset to capture the match's key aspects that are most relevant for outcome analysis. The focus on the number of goals scored by home and away teams enables investigations into phenomena such as home advantage and comparative team performance.
+
+The variable `season` adds temporal context, allowing for the analysis across different seasons and observation of evolutionary trends in the data. The identifiers `home_team_api_id` and `away_team_api_id` are crucial for distinguishing between teams, linking match results to specific teams for comprehensive analyses when cross-referenced with other datasets. The quantitative measures `home_team_goal` and `away_team_goal` are fundamental for modeling match scores, analyzing the effectiveness of team strategies, and predicting outcomes in future matches.
+
+The sample table of the cleaned dataset is shown in @tbl-data.
+
+```{r}
+#| label: tbl-data
+#| tbl-cap: Sample of the Cleaned Dataset
+#| warning: false
+#| echo: false
+
+kable(head(matches_cleaned, 6), 
+      col.names = c("ID", "Season", "Home Team API ID", "Away Team API ID", "Home Team Goal", "Away Team Goal"),
+      booktabs = TRUE)
+
+```
+
+# Model
+
+```{r}
+#| label: construct-model
+#| warning: false
+#| message: false
+#| results: 'hide'
+#| echo: false
+
+# Model for home team goals
+home_goals_model <- glm(home_team_goal ~ home_team_api_id + away_team_api_id, 
+                        family = poisson(link = "log"), data = matches_cleaned)
+
+# Model for away team goals
+away_goals_model <- glm(away_team_goal ~ home_team_api_id + away_team_api_id, 
+                        family = poisson(link = "log"), data = matches_cleaned)
+
+# Examine the summary of the model to see the estimated parameters
+summary(home_goals_model)
+summary(away_goals_model)
+
+saveRDS(home_goals_model, file = "home_goals_model.rds")
+saveRDS(away_goals_model, file = "away_goals_model.rds")
+
+```
+
+In this analysis, we explore the relationship between football match outcomes—specifically, the number of goals scored by home and away teams—and the teams' unique identifiers.
+
+## Poisson Regression Models
+
+We constructed two Poisson regression models—one for the home team goals and another for the away team goals. Poisson regression is suitable for count data, such as goals scored, which follows a Poisson distribution. The Poisson distribution is a discrete probability distribution that expresses the probability of a given number of events occurring in a fixed interval of time or space if these events occur with a known constant mean rate and independently of the time since the last event.
+
+### Home Team Goals Model
+
+The model for home team goals is formalized as follows:
+
+$$
+\log(\mu_{\text{home}}) = \beta_0 + \beta_1 \times \text{HomeTeamAPIID} + \beta_2 \times \text{AwayTeamAPIID}
+$$
+
+Where:
+- $\mu_{\text{home}}$ represents the expected count of goals scored by the home team.
+- $\beta_0$ is the intercept of the model.
+- $\beta_1$ and $\beta_2$ are the coefficients for the home and away teams' API IDs, respectively.
+
+### Away Team Goals Model
+
+Similarly, the model for away team goals is given by:
+
+$$
+\log(\mu_{\text{away}}) = \alpha_0 + \alpha_1 \times \text{HomeTeamAPIID} + \alpha_2 \times \text{AwayTeamAPIID}
+$$
+
+Where:
+- $\mu_{\text{away}}$ is the expected count of goals scored by the away team.
+- $\alpha_0$ is the intercept.
+- $\alpha_1$ and $\alpha_2$ are the coefficients corresponding to the home and away teams' API IDs.
+
+In both models, the `home_team_api_id` and `away_team_api_id` serve as predictors, and their coefficients measure the association of each team's identity with the number of goals scored. The `log` link function relates the linear predictors to the expected log count of goals.
+
+These models provide insights into the scoring patterns associated with different teams and may reveal the presence of any home-field advantage or away-field disadvantage.
+
+The summary of both models is shown in @tbl-p_home and @tbl-p_away.
+
+```{r}
+#| label: tbl-p_home
+#| tbl-cap: Summary of Poisson Regression Model for Home Teams
+#| warning: false
+#| echo: false
+
+home_goals_summary <- broom::tidy(home_goals_model)
+
+kable(home_goals_summary, 
+      booktabs = TRUE)
+
+```
+
+```{r}
+#| label: tbl-p_away
+#| tbl-cap: Summary of Poisson Regression Model for Away Teams
+#| warning: false
+#| echo: false
+
+away_goals_summary <- broom::tidy(away_goals_model)
+
+kable(away_goals_summary, 
+      booktabs = TRUE)
+
+```
+
+## Overdispersion in Poisson Regression Models
+
+In the application of Poisson regression models, a fundamental assumption is that the mean and variance of the count data are equal. This characteristic is intrinsic to the Poisson distribution, which is defined by a single parameter governing both its mean and variance. Nonetheless, empirical data frequently violate this assumption, exhibiting what is known as overdispersion, where the observed variance surpasses the expected mean.
+
+### Diagnostic Tests for Overdispersion
+
+To diagnose overdispersion within our Poisson regression models for home and away team goals, we conducted a series of tests:
+
+- We calculated the Pearson residuals for each model, which measure the difference between the observed and predicted counts, normalized by the predicted standard deviation.
+
+- We determined the variance of these Pearson residuals. For a model fitting the data well, we would anticipate this variance to approximate 1. A variance significantly greater than 1 signals overdispersion.
+
+- We computed a Chi-squared goodness-of-fit test for each model. Under the correct model, the sum of squared Pearson residuals should follow a Chi-squared distribution. A large Chi-squared statistic indicates a poor fit, suggesting that the model's assumptions may not hold for the data.
+
+### Test Results and Implications
+
+The test results shown in @tbl-test revealed a residual variance exceeding 1 for both the home and away goal models, coupled with exceedingly low p-values from the Chi-squared tests. This indicates a substantial deviation from the Poisson model's assumptions, signifying the presence of overdispersion.
+
+### Transitioning to a Negative Binomial Regression Model
+
+Given the evidence of overdispersion, it is statistically prudent to transition to a Negative Binomial regression model. This model extends the Poisson regression by introducing an additional parameter to explicitly model overdispersion, permitting the variance to outstrip the mean. Adopting the Negative Binomial regression framework enhances the model's flexibility, offering a more accurate fit for count data characterized by overdispersion and leading to more reliable inferential statistics.
+
+```{r}
+#| label: test-model
+#| warning: false
+#| message: false
+#| results: 'hide'
+#| echo: false
+
+# Calculate residual.
+home_residuals <- residuals(home_goals_model, type = "pearson")
+away_residuals <- residuals(away_goals_model, type = "pearson")
+
+# Calculate variance.
+home_residuals_var <- var(home_residuals)
+away_residuals_var <- var(away_residuals)
+
+# Calculate resicual mean.
+home_residuals_mean <- mean(home_residuals^2)
+away_residuals_mean <- mean(away_residuals^2)
+
+home_chisq <- sum(home_residuals^2)
+away_chisq <- sum(away_residuals^2)
+
+home_df <- nrow(matches_cleaned) - length(coef(home_goals_model))
+away_df <- nrow(matches_cleaned) - length(coef(away_goals_model))
+
+# Calculate p-value.
+home_pvalue <- pchisq(home_chisq, home_df, lower.tail = FALSE)
+away_pvalue <- pchisq(away_chisq, away_df, lower.tail = FALSE)
+
+home_overdispersion <- home_residuals_var > 1
+away_overdispersion <- away_residuals_var > 1
+
+```
+
+```{r}
+#| label: tbl-test
+#| tbl-cap: Summary of Poisson Regression Model for Away Teams
+#| warning: false
+#| echo: false
+
+# Creating a data frame to hold the diagnostics results
+diagnostics <- tibble(
+  Model = c("Home", "Away"),
+  Residuals_Var = c(home_residuals_var, away_residuals_var),
+  Squared_Residuals_Mean = c(home_residuals_mean, away_residuals_mean),
+  Chi_squared = c(home_chisq, away_chisq),
+  P_value = c(home_pvalue, away_pvalue),
+  Overdispersion = c(home_overdispersion, away_overdispersion)
+)
+
+# Formatting the results with kable and kableExtra
+kable(diagnostics, booktabs = TRUE) %>%
+  kable_styling(full_width = F, position = "center") %>%
+  column_spec(1, bold = TRUE) %>%
+  column_spec(5, color = ifelse(diagnostics$P_value < .05, "red", "black")) %>%
+  add_header_above(c(" " = 1, "Residuals" = 2, "Chi-squared Test" = 2, " " = 1))
+
+```
+
+## Negative Binomial Regression Models
+
+With the detection of overdispersion in the Poisson regression models, we have proceeded to adopt Negative Binomial regression models for both home and away team goals. This approach is more suitable for data where the variance exceeds the mean, which is often the case in count data such as goals scored in football matches.
+
+Negative Binomial regression is a type of generalized linear model that generalizes Poisson regression by introducing an extra parameter to account for the overdispersion. The probability distribution of the Negative Binomial model allows for the variance to be greater than the mean, which provides a better fit for overdispersed data.
+
+### Home Team Goals Model
+
+The modified model for home team goals accounts for the overdispersion and is defined by the following relationship:
+
+$$
+\log(\mu_{\text{home}}) = \beta_0 + \beta_1 \times \text{HomeTeamAPIID} + \beta_2 \times \text{AwayTeamAPIID} + \text{Overdispersion}
+$$
+
+Here, $\mu_{\text{home}}$ is the expected count of goals scored by the home team, adjusted for overdispersion. $\beta_0$ is the model's intercept, while $\beta_1$ and $\beta_2$ are the coefficients for the home and away team API IDs. The term "Overdispersion" is a placeholder for the Negative Binomial model's dispersion parameter.
+
+### Away Team Goals Model
+
+For the away team goals, the Negative Binomial model is similarly adjusted:
+
+$$
+\log(\mu_{\text{away}}) = \alpha_0 + \alpha_1 \times \text{HomeTeamAPIID} + \alpha_2 \times \text{AwayTeamAPIID} + \text{Overdispersion}
+$$
+
+In this equation, $\mu_{\text{away}}$ represents the adjusted expected count of goals for the away team. $\alpha_0$ is the intercept, and $\alpha_1$ and $\alpha_2$ correspond to the home and away team API IDs. The dispersion parameter is included to account for the extra variance observed in the data.
+
+The API IDs of the teams serve as predictors in these models, with their coefficients providing a measure of the teams' scoring propensity, all the while adjusting for the variability beyond what is captured by the Poisson assumption.
+
+By fitting these Negative Binomial models, we aim to obtain more reliable estimates that accommodate the observed overdispersion, thereby enhancing the robustness of our inferences regarding team performances.
+
+The summary of both models is shown in @tbl-nb_home and @tbl-nb_away.
+
+```{r}
+#| label: modify-model
+#| warning: false
+#| message: false
+#| results: 'hide'
+#| echo: false
+
+home_goals_nb_model <- glm.nb(home_team_goal ~ home_team_api_id + away_team_api_id,
+                              data = matches_cleaned)
+away_goals_nb_model <- glm.nb(away_team_goal ~ home_team_api_id + away_team_api_id,
+                              data = matches_cleaned)
+
+saveRDS(home_goals_nb_model, file = "home_goals_nb_model.rds")
+saveRDS(away_goals_nb_model, file = "away_goals_nb_model.rds")
+
+```
+
+```{r}
+#| label: tbl-nb_home
+#| tbl-cap: Summary of Negative Binomial Regression Model for Home Teams
+#| warning: false
+#| echo: false
+
+home_goals_nb_summary <- broom::tidy(home_goals_nb_model)
+
+kable(home_goals_nb_summary, 
+      booktabs = TRUE)
+
+```
+
+```{r}
+#| label: tbl-nb_away
+#| tbl-cap: Summary of Negative Binomial Regression Model for Away Teams
+#| warning: false
+#| echo: false
+
+away_goals_nb_summary <- broom::tidy(away_goals_nb_model)
+
+kable(away_goals_nb_summary, 
+      booktabs = TRUE)
+
+```
+
+# Discussion
+
+In our investigation of football match outcomes, particularly the count of goals scored, logistic regression was considered but ultimately not selected as the primary analytical approach. Logistic regression is typically utilized for binary or categorical outcome variables, such as win/loss or goal/no goal scenarios. However, our research focus required modeling the actual number of goals, which is a count variable. While logistic regression could potentially be used to model the probability of scoring any number of goals, it does not naturally account for the distribution of counts, nor does it easily extend to incorporate the variability seen in the number of goals scored across matches. This limitation becomes particularly pronounced when addressing the issue of overdispersion—a phenomenon not adequately managed by logistic regression. Poisson and negative binomial regression models are specifically designed for count data and include the flexibility to handle overdispersion, thus providing a more suitable and precise modeling framework for our data structure and research objectives.
+
+Initially, we implemented Poisson regression models due to their appropriateness for count data, which assumes the mean and variance of the distribution to be equal — an assumption intrinsic to the Poisson distribution. However, our diagnostic tests suggested the presence of overdispersion in the data, as evidenced by the Pearson residuals' variance being significantly greater than 1 and the resulting large chi-squared values.
+
+The overdispersion indicated that the variability in our data was too great to be adequately modeled by the Poisson distribution. As a consequence, the standard errors estimated by the Poisson models would be underestimated, potentially leading to incorrect inferences. To address this, we turned to the Negative Binomial regression model, which introduces an additional parameter to model the overdispersion explicitly. This model allows the variance to exceed the mean, providing a more flexible fit for our overdispersed count data.
+
+Furthermore, while logistic regression is suitable for binary outcomes, our response variables — the number of goals scored by home and away teams — are counts, making logistic regression less appropriate in this context. Negative Binomial regression is more apt for our analysis since it can handle the count nature of the response variable along with the overdispersion.
+
+In conclusion, the choice to employ Negative Binomial regression was driven by the need to account for the extra-Poissonian variation observed in our data. By fitting these models, we achieved a more reliable and nuanced understanding of the factors influencing goal-scoring in European football matches, ensuring our statistical inferences are robust and reflective of the underlying data patterns.
+
+# References
